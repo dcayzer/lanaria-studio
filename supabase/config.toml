@@ -1,4 +1,4 @@
-project_id = "klgffwzvnketxopqufbx"
+project_id = "xursfpypryhdfuyshpve"
 
 [functions.generate]
 verify_jwt = false
@@ -8,3 +8,14 @@ verify_jwt = false
 
 [functions.chart-debug-fetch]
 verify_jwt = false
+
+[functions.test-fn]
+enabled = true
+verify_jwt = false
+import_map = "./functions/test-fn/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/test-fn/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/test-fn/*.html" ]
