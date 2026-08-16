@@ -1,0 +1,1 @@
+create policy "chart_debug_anon_read" on storage.objects for select to anon using (bucket_id = 'chart-debug');

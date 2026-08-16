@@ -1,0 +1,10 @@
+project_id = "klgffwzvnketxopqufbx"
+
+[functions.generate]
+verify_jwt = false
+
+[functions.chart]
+verify_jwt = false
+
+[functions.chart-debug-fetch]
+verify_jwt = false

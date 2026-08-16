@@ -1,0 +1,12 @@
+Invocation: 2026-07-05T13:30:09Z (most recent)
+
+structural model (LIVE): {"frames":[{"rect":[21,33,31,43],"frameColour":2,"paneColour":4,"hDividers":[26],"vDividers":[38],"pairId":null},{"rect":[40,17,54,27],"frameColour":2,"paneColour":4,"hDividers":[47],"vDividers":[22],"pairId":1},{"rect":[40,49,54,59],"frameColour":2,"paneColour":4,"hDividers":[47],"vDividers":[54],"pairId":1}],"freeLines":[],"ownedCells":451,"outermostRegion":{"colour":0,"cellCount":3068,"touchesAllSides":true}}
+
+DIAG: reject: too small {"h":1,"w":1,"r0":36,"r1":36,"c0":10,"c1":10}
+DIAG: reject: border coverage {"ratio":0.4017857142857143,"r0":38,"r1":69,"c0":26,"c1":51}
+DIAG: reject: too small {"h":1,"w":1,"r0":21,"r1":21,"c0":20,"c1":20}
+DIAG: reject: border coverage {"ratio":0.04938271604938271,"r0":9,"r1":35,"c0":11,"c1":66}
+
+DIAG: frame candidate raw: {"r0":40,"r1":54,"c0":17,"c1":28,"bwT":2,"bwB":1,"bwL":1,"bwR":1,"hRuns":[[47],[53]],"vRuns":[[22],[27]]}
+DIAG: frame candidate raw: {"r0":21,"r1":32,"c0":33,"c1":44,"bwT":2,"bwB":2,"bwL":2,"bwR":2,"hRuns":[[26,27]],"vRuns":[[38,39]]}
+DIAG: frame candidate raw: {"r0":40,"r1":54,"c0":49,"c1":60,"bwT":2,"bwB":2,"bwL":2,"bwR":1,"hRuns":[[47]],"vRuns":[[55]]}

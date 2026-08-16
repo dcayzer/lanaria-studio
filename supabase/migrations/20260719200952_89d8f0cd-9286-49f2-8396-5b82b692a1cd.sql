@@ -1,0 +1,1 @@
+alter table public.motifs add column brand text not null check (brand in ('appletons', 'dmc'));
