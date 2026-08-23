@@ -1040,7 +1040,20 @@ function Index() {
     // Clear file inputs
     if (sourceImageInputRef.current) sourceImageInputRef.current.value = "";
   };
-  const tuningFilter = `brightness(${brightness}%) saturate(${saturation}%) contrast(${contrast}%)`;
+  // Identity tuning must be a genuinely ABSENT filter, not a no-op string.
+  // ctx.filter = "brightness(100%) ..." is numerically identity but still
+  // routes drawImage through the filter pipeline, which resamples in linear
+  // light. Averaging black ink with white paper in linear space yields ~188
+  // instead of ~128, so thin anti-aliased dark strokes are lifted to pale
+  // grey while large flat areas are unaffected. Measured on a real upload:
+  // pixels darker than sum 250 fell from 17,384 to 644 between the browser
+  // and the chart engine, and the pure-black bucket (8,100 px) vanished
+  // entirely while every olive bucket survived intact. That is why black
+  // linework never reached the chart.
+  const tuningIsIdentity = brightness === 100 && saturation === 100 && contrast === 100;
+  const tuningFilter = tuningIsIdentity
+    ? ""
+    : `brightness(${brightness}%) saturate(${saturation}%) contrast(${contrast}%)`;
 
   async function buildAdjustedImage(url: string): Promise<string> {
     // Sliders untouched → use the already-uploaded image AS-IS. No re-flatten,
@@ -3562,7 +3575,7 @@ function Index() {
                                       top: `${imageRect.y * 100}%`,
                                       width: `${imageRect.w * 100}%`,
                                       height: `${imageRect.h * 100}%`,
-                                      filter: tuningFilter,
+                                      filter: tuningFilter || "none",
                                     }}
                                   />
                                 ) : (
@@ -3570,7 +3583,7 @@ function Index() {
                                     src={generatedImageUrl}
                                     alt="Current crop"
                                     className="h-full w-full object-contain"
-                                    style={{ filter: tuningFilter }}
+                                    style={{ filter: tuningFilter || "none" }}
                                   />
                                 )}
                               </div>
@@ -3589,7 +3602,7 @@ function Index() {
                                 ref={cropFrameRef}
                                 imageUrl={uncroppedImageUrl ?? generatedImageUrl}
                                 aspect={canvasAspect}
-                                filter={tuningFilter}
+                                filter={tuningFilter || "none"}
                                 rect={imageRect}
                                 onRectChange={setImageRect}
                                 finishedWidthInches={canvasDims.width}
@@ -3691,7 +3704,7 @@ function Index() {
                                       top: `${imageRect.y * 100}%`,
                                       width: `${imageRect.w * 100}%`,
                                       height: `${imageRect.h * 100}%`,
-                                      filter: tuningFilter,
+                                      filter: tuningFilter || "none",
                                     }}
                                   />
                                 ) : (
@@ -3699,7 +3712,7 @@ function Index() {
                                     src={generatedImageUrl}
                                     alt="Tuning preview"
                                     className="absolute inset-0 h-full w-full object-contain"
-                                    style={{ filter: tuningFilter }}
+                                    style={{ filter: tuningFilter || "none" }}
                                   />
                                 )}
                               </div>
@@ -4525,7 +4538,5 @@ function OrnamentFrame({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-
-
 
 
