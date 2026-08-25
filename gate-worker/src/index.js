@@ -134,9 +134,29 @@ export default {
       });
     }
 
-    // Authenticated: proxy through to the real app
+    // Authenticated: proxy through to the real app.
+    // Build a fresh header set and drop Host (and other hop-specific headers)
+    // so the subrequest routes to REAL_ORIGIN instead of this Worker's own host.
     const originUrl = new URL(url.pathname + url.search, REAL_ORIGIN);
-    const proxyRequest = new Request(originUrl.toString(), request);
-    return fetch(proxyRequest);
+    const proxyHeaders = new Headers(request.headers);
+    proxyHeaders.delete("host");
+    proxyHeaders.delete("cf-connecting-ip");
+    proxyHeaders.delete("cf-ray");
+
+    const proxyRequest = new Request(originUrl.toString(), {
+      method: request.method,
+      headers: proxyHeaders,
+      body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body,
+      redirect: "manual",
+    });
+
+    const originResponse = await fetch(proxyRequest);
+
+    // Pass the response straight through, including redirects/status.
+    return new Response(originResponse.body, {
+      status: originResponse.status,
+      statusText: originResponse.statusText,
+      headers: originResponse.headers,
+    });
   },
 };
