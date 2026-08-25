@@ -1,4 +1,3 @@
-const REAL_ORIGIN = "https://lanaria-studio.delaneycayzer.workers.dev";
 const COOKIE_NAME = "lanaria_access";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 
@@ -134,29 +133,8 @@ export default {
       });
     }
 
-    // Authenticated: proxy through to the real app.
-    // Build a fresh header set and drop Host (and other hop-specific headers)
-    // so the subrequest routes to REAL_ORIGIN instead of this Worker's own host.
-    const originUrl = new URL(url.pathname + url.search, REAL_ORIGIN);
-    const proxyHeaders = new Headers(request.headers);
-    proxyHeaders.delete("host");
-    proxyHeaders.delete("cf-connecting-ip");
-    proxyHeaders.delete("cf-ray");
-
-    const proxyRequest = new Request(originUrl.toString(), {
-      method: request.method,
-      headers: proxyHeaders,
-      body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body,
-      redirect: "manual",
-    });
-
-    const originResponse = await fetch(proxyRequest);
-
-    // Pass the response straight through, including redirects/status.
-    return new Response(originResponse.body, {
-      status: originResponse.status,
-      statusText: originResponse.statusText,
-      headers: originResponse.headers,
-    });
+    // Authenticated: hand the request straight to the real app via a
+    // service binding (worker-to-worker call, no DNS/Host header involved).
+    return env.REAL_APP.fetch(request);
   },
 };
