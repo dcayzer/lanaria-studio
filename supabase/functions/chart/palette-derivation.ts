@@ -350,78 +350,98 @@ export function findSalientColourIslands(
 }
 
 /**
- * Reserve ONE palette slot for a genuinely dark, near-NEUTRAL colour
- * (black / charcoal ink) before population-weighted median-cut runs.
+ * Reserve palette slots for NEAR-NEUTRAL TONES -- greys, charcoals and
+ * off-whites -- across the lightness range the artwork actually contains.
  *
- * Why the two existing reservation mechanisms cannot cover this:
+ * Why the other two reservation mechanisms cannot cover this:
  * reserveVividColours ranks by CHROMA percentile, and
  * findSalientColourIslands requires chroma >= SALIENT_MIN_CHROMA (5) plus a
- * local HUE contrast. Black ink has chroma ~1-2 and no meaningful hue at
- * all, so BOTH skip it by construction -- this is a genuine gap, not a
+ * local HUE contrast. A neutral has chroma ~0-2 and no meaningful hue at
+ * all, so BOTH skip it by construction. This is a structural gap, not a
  * tuning problem.
  *
- * Measured on a real upload (a hand-lettered vegetable illustration): the
- * black handwriting resolved to olive green #567338 at dE00 23.5, purely
- * because green was the darkest entry the palette happened to contain.
- * Every other entry was further still (next nearest #697820 at 25.1). With
- * no dark neutral in the palette there is no correct answer available at
- * matching time, so the fix has to happen here, at derivation.
+ * WHY A RAMP AND NOT JUST ONE DARK SLOT. An earlier version of this reserved
+ * exactly one dark neutral. That put Charcoal 998 in the palette and the
+ * darkest core of black handwriting did come out charcoal -- but the
+ * ANTI-ALIASED MID-TONES of the same strokes did not, and the text came out
+ * a mix of grey and green. Measured against the clusters from a real run:
  *
- * REGRESSION GUARD: the absolute DARK_MAX_LIGHTNESS cap, not the
- * percentile. A percentile alone always finds "the darkest 5%" of any
- * image and would invent a spurious black thread on artwork that contains
- * none. Verified against a pastel-only control: adaptive threshold came
- * back at L 77.4, the cap held it to 45, zero candidates, nothing
- * reserved -- byte-identical behaviour on any image without real dark ink.
+ *   black ink 25% blended into paper  L 33  ->  charcoal          (correct)
+ *   black ink 40% blended into paper  L 48  ->  greenish-grey cluster
+ *   black ink 50% blended into paper  L 57  ->  greenish-grey cluster
+ *   black ink 60% blended into paper  L 65  ->  greenish-grey cluster
+ *   black ink 70% blended into paper  L 74  ->  greenish-grey cluster
  *
- * Deliberately at most ONE slot: if the artwork genuinely has plenty of
- * dark, median-cut finds it unaided and this reservation merely duplicates
- * an entry the downstream near-duplicate merge then collapses. Self-
- * correcting either way.
+ * The artwork legitimately contains olive-greys (foliage), so those clusters
+ * exist and, in plain Lab, a neutral mid-grey is genuinely nearer to a
+ * greenish-grey of similar lightness than to either a very dark charcoal or
+ * a near-white. With no neutral cluster at those lightnesses there is no
+ * correct answer available, and the mid-tones of every dark stroke get a
+ * green thread. Reserving the ramp puts real neutral clusters at those
+ * lightnesses; re-measured with the ramp present, all five blends above
+ * resolve to neutrals, and olive, drab green, red, pink, tan and paper all
+ * resolve exactly as before.
+ *
+ * This is the general form of the problem, not a black-specific patch: it is
+ * tonal VARIATION within a near-neutral that was being lost, which is the
+ * same reason a subtle grey shadow or a soft pencil tone would flatten out.
+ *
+ * REGRESSION GUARDS: bands are only reserved when genuinely populated (both
+ * an absolute and a fractional floor), at most NEUTRAL_MAX_RESERVED of them,
+ * and only for samples that are actually near-neutral. An image with no
+ * neutral content reserves nothing and behaves byte-for-byte as before.
  */
-const DARK_LIGHTNESS_PERCENTILE = 5;
-const DARK_MAX_LIGHTNESS = 45;   // absolute: must actually BE dark
-const DARK_MAX_CHROMA = 18;      // neutral-ish; saturated darks are reserveVividColours' job
-const DARK_MIN_ABS = 20;
-const DARK_MIN_FRACTION = 0.0015;
+const NEUTRAL_MAX_CHROMA = 6;        // above this it is a colour, not a neutral
+const NEUTRAL_BAND_L = 18;           // lightness width of each reserved band
+const NEUTRAL_MAX_RESERVED = 3;      // ramp only -- never a whole grey scale
+const NEUTRAL_MIN_ABS = 20;
+const NEUTRAL_MIN_FRACTION = 0.0015;
 
-function reserveDarkNeutrals(
+function reserveNeutralTones(
   samples: Rgb[],
   alreadyUsed: Set<number>,
 ): { reserved: Rgb[]; reservedPopulations: number[]; usedIdx: Set<number> } {
   const empty = { reserved: [] as Rgb[], reservedPopulations: [] as number[], usedIdx: new Set<number>() };
   if (samples.length < 50) {
-    console.log("reserveDarkNeutrals: SKIP too few samples", samples.length);
+    console.log("reserveNeutralTones: SKIP too few samples", samples.length);
     return empty;
   }
-  const labs = samples.map((c) => rgbToLabLocal(c[0], c[1], c[2]));
-  const ls = labs.map((l) => l[0]);
-  const sorted = [...ls].sort((a, b) => a - b);
-  const pct = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * DARK_LIGHTNESS_PERCENTILE / 100))];
-  const cap = Math.min(pct, DARK_MAX_LIGHTNESS);
-  const idx: number[] = [];
-  let r = 0, g = 0, b = 0;
+  const bands = new Map<number, { idx: number[]; r: number; g: number; b: number }>();
   for (let i = 0; i < samples.length; i++) {
     if (alreadyUsed.has(i)) continue;
-    const chroma = Math.sqrt(labs[i][1] * labs[i][1] + labs[i][2] * labs[i][2]);
-    if (labs[i][0] > cap || chroma > DARK_MAX_CHROMA) continue;
-    idx.push(i);
-    r += samples[i][0]; g += samples[i][1]; b += samples[i][2];
+    const lab = rgbToLabLocal(samples[i][0], samples[i][1], samples[i][2]);
+    const chroma = Math.sqrt(lab[1] * lab[1] + lab[2] * lab[2]);
+    if (chroma > NEUTRAL_MAX_CHROMA) continue;
+    const band = Math.floor(lab[0] / NEUTRAL_BAND_L);
+    let e = bands.get(band);
+    if (!e) { e = { idx: [], r: 0, g: 0, b: 0 }; bands.set(band, e); }
+    e.idx.push(i);
+    e.r += samples[i][0]; e.g += samples[i][1]; e.b += samples[i][2];
   }
-  if (idx.length < DARK_MIN_ABS || idx.length / samples.length < DARK_MIN_FRACTION) {
-    console.log("reserveDarkNeutrals: SKIP gate", JSON.stringify({ samples: samples.length, pct, cap, candidates: idx.length, needAbs: DARK_MIN_ABS, needFrac: DARK_MIN_FRACTION }));
+  const viable = [...bands.entries()]
+    .filter(([, e]) => e.idx.length >= NEUTRAL_MIN_ABS && e.idx.length / samples.length >= NEUTRAL_MIN_FRACTION)
+    .sort((a, b) => b[1].idx.length - a[1].idx.length)
+    .slice(0, NEUTRAL_MAX_RESERVED);
+  if (!viable.length) {
+    console.log("reserveNeutralTones: SKIP gate", JSON.stringify({
+      samples: samples.length, bandsFound: bands.size,
+      needAbs: NEUTRAL_MIN_ABS, needFrac: NEUTRAL_MIN_FRACTION,
+    }));
     return empty;
   }
-  const n = idx.length;
-  const reservedRgb = [Math.round(r / n), Math.round(g / n), Math.round(b / n)] as Rgb;
-  const darkReservedDiag = { rgb: reservedRgb, population: n, pct, cap, samples: samples.length };
-  console.log("reserveDarkNeutrals: RESERVED", JSON.stringify(darkReservedDiag));
-  CHART_DIAG.darkReserved = darkReservedDiag;
-  return {
-    reserved: [reservedRgb],
-    reservedPopulations: [n],
-    usedIdx: new Set<number>(idx),
-  };
+  const reserved: Rgb[] = [];
+  const reservedPopulations: number[] = [];
+  const usedIdx = new Set<number>();
+  for (const [, e] of viable) {
+    const n = e.idx.length;
+    reserved.push([Math.round(e.r / n), Math.round(e.g / n), Math.round(e.b / n)] as Rgb);
+    reservedPopulations.push(n);
+    for (const i of e.idx) usedIdx.add(i);
+  }
+  const diag = reserved.map((rgb, i) => ({ rgb, population: reservedPopulations[i] }));
+  console.log("reserveNeutralTones: RESERVED", JSON.stringify(diag));
+  CHART_DIAG.darkReserved = diag;
+  return { reserved, reservedPopulations, usedIdx };
 }
 
 export function buildClusterColours(
@@ -457,10 +477,10 @@ export function buildClusterColours(
 
   const reserveCap = Math.max(1, Math.floor(targetCount / 3));
   const vivid = reserveVividColours(chosen, reserveCap);
-  const dark = reserveDarkNeutrals(chosen, vivid.usedIdx);
-  const reserved = [...vivid.reserved, ...dark.reserved];
-  const reservedPopulations = [...vivid.reservedPopulations, ...dark.reservedPopulations];
-  const usedIdx = new Set<number>([...vivid.usedIdx, ...dark.usedIdx]);
+  const neutral = reserveNeutralTones(chosen, vivid.usedIdx);
+  const reserved = [...vivid.reserved, ...neutral.reserved];
+  const reservedPopulations = [...vivid.reservedPopulations, ...neutral.reservedPopulations];
+  const usedIdx = new Set<number>([...vivid.usedIdx, ...neutral.usedIdx]);
   if (!reserved.length) return medianCut(chosen, targetCount);
 
   const remaining = chosen.filter((_, i) => !usedIdx.has(i));
