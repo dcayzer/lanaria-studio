@@ -530,6 +530,11 @@ export function medianDenoise(sourceRgb: Uint8Array, w: number, h: number, radiu
  * this are anti-aliasing and JPEG ringing at edges -- real artifacts, not
  * design intent. Measured on real uploads: ~17-26% of a flat-art image is
  * edge blend rather than design colour.
+ *
+ * A SECOND pass then admits stroke cores -- see the comment on it below.
+ * Without that pass this function is blind to linework, which is how a
+ * colour that exists only as thin strokes (black handwriting, a fine outline)
+ * could be absent from the derived palette entirely.
  */
 export function computeFlatRegionMask(
   sourceRgb: Uint8Array,
@@ -557,6 +562,69 @@ export function computeFlatRegionMask(
       if (maxRange <= tolerance) mask[y * w + x] = 1;
     }
   }
+
+  // SECOND PASS -- STROKE CORES.
+  //
+  // The flat test above keeps only pixels whose whole 3x3 neighbourhood is
+  // near-uniform. That is right for finding FILL colours, but a stroke
+  // narrower than ~3px has no uniform interior: every pixel of it has an
+  // edge in its window. So linework is excluded from palette derivation
+  // ENTIRELY, and any colour that exists only as lines never becomes a
+  // cluster, never earns a thread, and every stitch that should be that
+  // colour falls through to whatever unrelated thread happens to be nearest.
+  //
+  // Measured on a real 1024x1024 upload of hand-lettered artwork:
+  //   sourceStats         pixelsUnder250 = 6556, minPixelSum = 37
+  //   thinLineMap         flagged = 54018, of which flaggedDark = 4229
+  //   reserveDarkNeutrals samples = 615, 5th-pct L = 48.6, candidates = 0
+  // The black ink was present in the image and correctly detected as
+  // linework, yet of the 615 samples that reached palette derivation NOT ONE
+  // was below L 45. The palette's darkest entry came out as 337 #567338, a
+  // drab green -- which is exactly what the black handwriting was stitched
+  // in. The same failure applies to any line-only colour, dark or not.
+  //
+  // A pixel is admitted here if enough of its 8 neighbours share its colour
+  // closely. Along a stroke the ink is consistent, so a core pixel has
+  // several near-identical neighbours; an isolated anti-aliased speck does
+  // not. This deliberately errs toward including borderline edge pixels
+  // rather than excluding real ink: an over-included blend is a near
+  // duplicate that the existing near-duplicate merge collapses downstream,
+  // whereas an excluded ink colour is unrecoverable -- no later stage can
+  // invent it back.
+  //
+  // ADDITIVE ONLY: this pass can set mask bits to 1, never to 0, so every
+  // colour previously derived is still derived. It cannot run on photographs
+  // at all -- index.ts passes flatMask = null for inputType "photo", so
+  // computeFlatRegionMask is never called on that path.
+  const LINE_CORE_TOL = 26;
+  const MIN_LINE_CORE_NEIGHBOURS = 3;
+  let lineCorePixels = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (mask[i]) continue;
+      const o = i * 3;
+      const r = sourceRgb[o], g = sourceRgb[o + 1], b = sourceRgb[o + 2];
+      let similar = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = Math.min(w - 1, Math.max(0, x + dx));
+          const ny = Math.min(h - 1, Math.max(0, y + dy));
+          const n = (ny * w + nx) * 3;
+          const d = Math.abs(sourceRgb[n] - r)
+            + Math.abs(sourceRgb[n + 1] - g)
+            + Math.abs(sourceRgb[n + 2] - b);
+          if (d <= LINE_CORE_TOL) similar++;
+        }
+      }
+      if (similar >= MIN_LINE_CORE_NEIGHBOURS) {
+        mask[i] = 1;
+        lineCorePixels++;
+      }
+    }
+  }
+  console.log("linework palette sampling:", JSON.stringify({ lineCorePixels }));
   return mask;
 }
 
