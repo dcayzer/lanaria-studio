@@ -1,0 +1,17 @@
+name: Deploy Supabase Edge Functions
+on:
+  push:
+    branches: [master]
+    paths: ["supabase/functions/**"]
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase functions deploy chart --project-ref xursfpypryhdfuyshpve
