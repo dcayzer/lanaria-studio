@@ -351,49 +351,36 @@ export function findSalientColourIslands(
 
 /**
  * Reserve palette slots for NEAR-NEUTRAL TONES -- greys, charcoals and
- * off-whites -- across the lightness range the artwork actually contains.
+ * off-whites -- so ink that is neutral rather than coloured still earns a
+ * thread of its own.
  *
- * Why the other two reservation mechanisms cannot cover this:
- * reserveVividColours ranks by CHROMA percentile, and
- * findSalientColourIslands requires chroma >= SALIENT_MIN_CHROMA (5) plus a
- * local HUE contrast. A neutral has chroma ~0-2 and no meaningful hue at
- * all, so BOTH skip it by construction. This is a structural gap, not a
- * tuning problem.
+ * Why the other two mechanisms cannot cover this: reserveVividColours ranks
+ * by CHROMA percentile, and findSalientColourIslands requires chroma >= 5
+ * plus a local HUE contrast. A neutral has chroma ~0-2 and no meaningful hue
+ * at all, so BOTH skip it by construction.
  *
- * WHY A RAMP AND NOT JUST ONE DARK SLOT. An earlier version of this reserved
- * exactly one dark neutral. That put Charcoal 998 in the palette and the
- * darkest core of black handwriting did come out charcoal -- but the
- * ANTI-ALIASED MID-TONES of the same strokes did not, and the text came out
- * a mix of grey and green. Measured against the clusters from a real run:
+ * BUDGET DISCIPLINE -- this is the part that went wrong once already. Every
+ * slot reserved here is a slot median-cut can no longer spend on colour.
+ * An earlier version took the three most POPULOUS neutral bands, and on a
+ * real run that cost the artwork its mid-green: 337 #567338 disappeared from
+ * the palette entirely and 1,128 stitches of foliage came back as
+ * #E8DDA5 pale yellow. Reserving neutrals must not be paid for out of the
+ * greens.
  *
- *   black ink 25% blended into paper  L 33  ->  charcoal          (correct)
- *   black ink 40% blended into paper  L 48  ->  greenish-grey cluster
- *   black ink 50% blended into paper  L 57  ->  greenish-grey cluster
- *   black ink 60% blended into paper  L 65  ->  greenish-grey cluster
- *   black ink 70% blended into paper  L 74  ->  greenish-grey cluster
- *
- * The artwork legitimately contains olive-greys (foliage), so those clusters
- * exist and, in plain Lab, a neutral mid-grey is genuinely nearer to a
- * greenish-grey of similar lightness than to either a very dark charcoal or
- * a near-white. With no neutral cluster at those lightnesses there is no
- * correct answer available, and the mid-tones of every dark stroke get a
- * green thread. Reserving the ramp puts real neutral clusters at those
- * lightnesses; re-measured with the ramp present, all five blends above
- * resolve to neutrals, and olive, drab green, red, pink, tan and paper all
- * resolve exactly as before.
- *
- * This is the general form of the problem, not a black-specific patch: it is
- * tonal VARIATION within a near-neutral that was being lost, which is the
- * same reason a subtle grey shadow or a soft pencil tone would flatten out.
- *
- * REGRESSION GUARDS: bands are only reserved when genuinely populated (both
- * an absolute and a fractional floor), at most NEUTRAL_MAX_RESERVED of them,
- * and only for samples that are actually near-neutral. An image with no
- * neutral content reserves nothing and behaves byte-for-byte as before.
+ * So the rule is now:
+ *   1. ALWAYS take the darkest viable band. Dark ink is the case that has no
+ *      alternative -- if it is missing there is no near-enough thread and it
+ *      falls through to an unrelated colour, whereas a missing mid-grey
+ *      merely lands on a neighbouring grey. Selecting the darkest by
+ *      population would lose it, because ink is usually a small minority.
+ *   2. Then at most ONE further band, the most populous of the rest, to
+ *      carry the broad tonal mass.
+ * Two slots total, not three -- enough to hold a dark end and a mid tone
+ * without starving the colour budget.
  */
 const NEUTRAL_MAX_CHROMA = 6;        // above this it is a colour, not a neutral
 const NEUTRAL_BAND_L = 18;           // lightness width of each reserved band
-const NEUTRAL_MAX_RESERVED = 3;      // ramp only -- never a whole grey scale
+const NEUTRAL_MAX_RESERVED = 2;      // was 3 -- see BUDGET DISCIPLINE above
 const NEUTRAL_MIN_ABS = 20;
 const NEUTRAL_MIN_FRACTION = 0.0015;
 
@@ -419,9 +406,7 @@ function reserveNeutralTones(
     e.r += samples[i][0]; e.g += samples[i][1]; e.b += samples[i][2];
   }
   const viable = [...bands.entries()]
-    .filter(([, e]) => e.idx.length >= NEUTRAL_MIN_ABS && e.idx.length / samples.length >= NEUTRAL_MIN_FRACTION)
-    .sort((a, b) => b[1].idx.length - a[1].idx.length)
-    .slice(0, NEUTRAL_MAX_RESERVED);
+    .filter(([, e]) => e.idx.length >= NEUTRAL_MIN_ABS && e.idx.length / samples.length >= NEUTRAL_MIN_FRACTION);
   if (!viable.length) {
     console.log("reserveNeutralTones: SKIP gate", JSON.stringify({
       samples: samples.length, bandsFound: bands.size,
@@ -429,10 +414,22 @@ function reserveNeutralTones(
     }));
     return empty;
   }
+  // 1. Darkest viable band, unconditionally (lowest band index = darkest).
+  const byDarkness = [...viable].sort((a, b) => a[0] - b[0]);
+  const picked = [byDarkness[0]];
+  // 2. Then the most populous of what remains, if there is room.
+  const rest = viable
+    .filter((v) => v !== picked[0])
+    .sort((a, b) => b[1].idx.length - a[1].idx.length);
+  for (const v of rest) {
+    if (picked.length >= NEUTRAL_MAX_RESERVED) break;
+    picked.push(v);
+  }
+
   const reserved: Rgb[] = [];
   const reservedPopulations: number[] = [];
   const usedIdx = new Set<number>();
-  for (const [, e] of viable) {
+  for (const [, e] of picked) {
     const n = e.idx.length;
     reserved.push([Math.round(e.r / n), Math.round(e.g / n), Math.round(e.b / n)] as Rgb);
     reservedPopulations.push(n);
